@@ -1,186 +1,303 @@
-# System Architecture: Predictive Maintenance & Equipment Failure Risk Engine
+# Complete End-to-End System Architecture & Workflow Specification
 
-## 1. Executive System Overview
-
-The **Predictive Maintenance & Equipment Failure Risk Engine** is an industrial IoT analytics platform designed to predict component degradation and impending machine breakdown in manufacturing environments.
-
-Rather than relying on basic classification, this architecture integrates **physics-informed domain engineering**, **rigorous statistical screening (ANOVA & $\chi^2$)**, **cost-sensitive machine learning**, and **explainable AI (SHAP)** to deliver actionable maintenance decisions.
+## Project: Predictive Maintenance & Equipment Failure Risk Engine
+**Domain:** Industrial IoT / Smart Manufacturing  
+**Target:** Predict machine breakdown, isolate failure modes, optimize financial downtime cost, and provide real-time XAI diagnostics.
 
 ---
 
-## 2. High-Level End-to-End System Architecture
+## 1. Visual Master Architecture Flowchart
 
 ```mermaid
 flowchart TD
-    subgraph INGESTION["1. Telemetry Ingestion"]
-        S1["Air / Process Temp (K)"]
-        S2["Rotational Speed (RPM)"]
-        S3["Torque (Nm)"]
-        S4["Tool Wear (min)"]
-        RAW[("Raw Sensor Feed<br/>AI4I 2020 Dataset")]
-        S1 --> RAW
-        S2 --> RAW
-        S3 --> RAW
-        S4 --> RAW
+    %% STAGE 1: TELEMETRY INGESTION
+    subgraph STAGE1["Stage 1: Telemetry Data Ingestion & Schema Definition"]
+        direction TB
+        RAW_INPUT["Raw Industrial Sensor Stream<br/>(AI4I 2020 CNC Milling Dataset: 10,000 Cycles)"]
+        S1["Air Temperature [K]"]
+        S2["Process Temperature [K]"]
+        S3["Rotational Speed [RPM]"]
+        S4["Torque [Nm]"]
+        S5["Tool Wear [min]"]
+        S6["Product Type [L / M / H]"]
+        
+        S1 --> RAW_INPUT
+        S2 --> RAW_INPUT
+        S3 --> RAW_INPUT
+        S4 --> RAW_INPUT
+        S5 --> RAW_INPUT
+        S6 --> RAW_INPUT
+
+        TARGETS["Target Ground Truth<br/>1. Binary Failure: Machine Failure (0 or 1)<br/>2. Multi-Mode: TWF, HDF, PWF, OSF, RNF"]
+        RAW_INPUT --> TARGETS
     end
 
-    subgraph FE["2. Feature Engineering & Signal Processing"]
-        FE_PHY["Physics-Informed Features<br/>- Mechanical Power (W)<br/>- Thermal Gradient ΔT<br/>- Overstrain Factor"]
-        FE_TIME["Time-Series Dynamics<br/>- Rolling Window Mean/Std<br/>- Rate of Change (Δsensor/Δt)"]
-        RAW --> FE_PHY
-        RAW --> FE_TIME
+    %% STAGE 2: PHYSICS & DYNAMICS FEATURE ENGINEERING
+    subgraph STAGE2["Stage 2: Physics-Informed Feature Engineering"]
+        direction TB
+        F_PWR["1. Mechanical Power (W)<br/>Power = Torque * (RPM * 2π / 60)<br/>Detects motor overload & power drops"]
+        F_TEMP["2. Thermal Gradient ΔT (K)<br/>ΔT = Process Temp - Air Temp<br/>Detects cooling system failure (HDF)"]
+        F_OVS["3. Overstrain Factor<br/>Overstrain = Tool Wear * Torque<br/>Detects structural tool fracture (OSF)"]
+        F_ROLL["4. Rolling Time-Series Dynamics<br/>- Rolling Mean (μ) over N cycles<br/>- Rolling Standard Deviation (σ) (vibration flutter)"]
+        F_ROC["5. Rate of Change (Δsensor / Δt)<br/>First derivative of temperature & speed"]
+
+        TARGETS --> F_PWR
+        TARGETS --> F_TEMP
+        TARGETS --> F_OVS
+        TARGETS --> F_ROLL
+        TARGETS --> F_ROC
     end
 
-    subgraph STATS["3. Statistical Hypothesis Testing Gate"]
-        ANOVA["ANOVA F-Test<br/>Continuous Telemetry vs Failure"]
-        CHI2["Chi-Square Test (χ²)<br/>Machine Variant vs Failure Modes"]
-        FE_PHY --> STATS
-        FE_TIME --> STATS
-        STATS --> FE_FILTERED["Screened Feature Matrix<br/>(Statistically Significant Predictors)"]
+    %% STAGE 3: STATISTICAL SCREENING GATE
+    subgraph STAGE3["Stage 3: Statistical Hypothesis Testing Gate"]
+        direction TB
+        ANOVA["One-Way ANOVA F-Test<br/>Continuous Telemetry vs Failure Target<br/>H0: Mean sensor value is identical in failure<br/>Rule: Reject H0 if p-value < 0.05"]
+        CHI2["Chi-Square (χ²) Contingency Test<br/>Categorical Type (L/M/H) vs Failure Modes<br/>H0: Machine grade is independent of failure<br/>Rule: Reject H0 if p-value < 0.05"]
+
+        F_PWR --> ANOVA
+        F_TEMP --> ANOVA
+        F_OVS --> ANOVA
+        F_ROLL --> ANOVA
+        F_ROC --> ANOVA
+        S6 --> CHI2
+
+        SCREENED["Validated Feature Matrix<br/>(Noise Removed, Statistically Significant Predictors Only)"]
+        ANOVA --> SCREENED
+        CHI2 --> SCREENED
     end
 
-    subgraph ML["4. Cost-Sensitive Risk Modeling"]
-        SPLIT["Stratified Group Split<br/>(Leakage Prevention)"]
-        MODEL["XGBoost / LightGBM<br/>(scale_pos_weight optimization)"]
-        CALIB["Probability Calibration &<br/>Cost Matrix Threshold Tuning"]
-        FE_FILTERED --> SPLIT --> MODEL --> CALIB
+    %% STAGE 4: DATA SPLITTING & PREPROCESSING
+    subgraph STAGE4["Stage 4: Leakage-Free Preprocessing & Splitting"]
+        direction TB
+        SPLIT["Stratified Group Split (80% Train / 20% Test)<br/>Preserves rare 3.4% failure class ratio"]
+        SCALER["StandardScaler<br/>Fitted ONLY on Train; Applied to Test"]
+        SCREENED --> SPLIT --> SCALER
     end
 
-    subgraph XAI["5. Explainable AI (SHAP)"]
-        SHAP_GLOB["Global Feature Drivers<br/>(Fleet-Wide Vulnerabilities)"]
-        SHAP_LOC["Local Waterfall Explanation<br/>(Root Cause per Machine Alert)"]
-        CALIB --> XAI
+    %% STAGE 5: COST-SENSITIVE MACHINE LEARNING ENGINE
+    subgraph STAGE5["Stage 5: Cost-Sensitive Risk Modeling"]
+        direction TB
+        BASELINES["Baseline Models<br/>- Logistic Regression (Linear Benchmark)<br/>- Random Forest (Bagging Benchmark)"]
+        CHAMPION["Champion Model: XGBoost / LightGBM<br/>Hyperparameter: scale_pos_weight = N_neg / N_pos (~28.5)<br/>Penalizes missed breakdowns"]
+        SCALER --> BASELINES
+        SCALER --> CHAMPION
     end
 
-    subgraph SERVING["6. Serving & Industrial Decision Engine"]
-        API["FastAPI / Inference Engine"]
-        UI["Streamlit Risk Dashboard"]
-        TIER["Multi-Tier Decision Matrix<br/>🟢 Normal (<35%)<br/>🟡 Warning (35-70%)<br/>🔴 Critical (>70%)"]
-        CALIB --> API --> UI
-        XAI --> UI
-        API --> TIER
+    %% STAGE 6: COST MATRIX & THRESHOLD OPTIMIZATION
+    subgraph STAGE6["Stage 6: Industrial Cost-Benefit Optimization"]
+        direction TB
+        METRICS["Primary Evaluation Metrics<br/>- Precision-Recall AUC (PR-AUC)<br/>- F2-Score (Recall Weighted)"]
+        COST_OPT["Industrial Cost Matrix Minimization<br/>- False Negative (Missed Failure): $10,000<br/>- False Positive (Extra Check): $200<br/>- Optimal Threshold Shift: τ* (~0.25 - 0.35)"]
+        CHAMPION --> METRICS --> COST_OPT
+    end
+
+    %% STAGE 7: EXPLAINABILITY (SHAP XAI)
+    subgraph STAGE7["Stage 7: Explainable AI (SHAP Diagnostic Engine)"]
+        direction TB
+        SHAP_TREE["TreeSHAP Engine"]
+        SHAP_GLOBAL["Global Fleet Vulnerability Plot<br/>Ranks top breakdown drivers across plant"]
+        SHAP_LOCAL["Local Alert Waterfall Plot<br/>Decomposes individual machine risk into sensor culprits"]
+        COST_OPT --> SHAP_TREE
+        SHAP_TREE --> SHAP_GLOBAL
+        SHAP_TREE --> SHAP_LOCAL
+    end
+
+    %% STAGE 8: OPERATIONAL DECISION ENGINE & DASHBOARD
+    subgraph STAGE8["Stage 8: Decision Engine & Streamlit UI"]
+        direction TB
+        TIERS["Tri-Tier Industrial Decision Matrix<br/>🟢 Low Risk (< 35%): Normal Operation<br/>🟡 Warning (35% - 70%): Schedule Inspection<br/>🔴 Critical (> 70%): Emergency Throttle / Shutdown"]
+        DASHBOARD["Interactive Streamlit Control Center<br/>- Telemetry Input Sliders & Real-Time Stream Simulator<br/>- Dynamic Risk Gauge<br/>- Instant Automated Maintenance Prescription"]
+        SHAP_LOCAL --> TIERS --> DASHBOARD
+        SHAP_GLOBAL --> DASHBOARD
     end
 ```
 
 ---
 
-## 3. Subsystem Breakdown
+## 2. Step-by-Step Workflow Deep-Dive
 
-### 3.1 Data Ingestion & Signal Layer
-* **Sources**: Continuous multi-sensor channels measuring rotational speed, torque, air/process temperature, and cumulative tool wear.
-* **Failure Modes Covered**:
-  1. **Tool Wear Failure (TWF)**: Gradual tool degradation exceeding replacement thresholds.
-  2. **Heat Dissipation Failure (HDF)**: Inability to radiate process heat into ambient air ($\Delta T < 8.6\text{K}$ and speed $< 1380\text{ rpm}$).
-  3. **Power Failure (PWF)**: Mechanical power falling outside safe bounds ($P < 3500\text{W}$ or $P > 9000\text{W}$).
-  4. **Overstrain Failure (OSF)**: Product of tool wear and applied torque exceeding mechanical shear limits.
-  5. **Random Failure (RNF)**: Uncorrelated process anomalies.
+Here is the exact step-by-step breakdown of how data travels through this system, what mathematical transformations occur, and why each stage exists:
+
+```
+Telemetry Feed ──> Physics FE ──> Hypothesis Gate ──> Split ──> XGBoost ──> Cost Matrix ──> SHAP ──> Actionable Dashboard
+```
 
 ---
 
-### 3.2 Physics-Informed Feature Engineering Layer
+### Stage 1: Telemetry Data Ingestion & Problem Formulation
 
-Standard ML models struggle with raw sensor values if physical laws are ignored. This layer injects physical constraints:
+#### What Happens:
+The engine ingests continuous sensor records from industrial milling equipment (AI4I 2020 dataset).
 
-1. **Mechanical Power Calculation ($W$):**
-   $$\text{Power} = \text{Torque [Nm]} \times \left(\text{Rotational Speed [rpm]} \times \frac{2\pi}{60}\right)$$
-2. **Thermal Gradient ($\Delta T$):**
-   $$\Delta T = \text{Process Temperature [K]} - \text{Air Temperature [K]}$$
-3. **Overstrain Interaction Index:**
-   $$\text{Overstrain Index} = \text{Tool Wear [min]} \times \text{Torque [Nm]}$$
-4. **Thermal Dissipation Efficiency:**
-   $$\text{Dissipation Ratio} = \frac{\Delta T}{\text{Rotational Speed}}$$
-5. **Rolling Statistical Volatility:**
-   * Moving mean ($\mu$) and standard deviation ($\sigma$) across rolling windows to capture vibration flutter and mechanical instability.
-
----
-
-### 3.3 Statistical Hypothesis Testing Gate
-
-Instead of treating feature selection as an arbitrary step, this architecture implements formal statistical hypothesis testing:
-
-| Test Type | Target Pair | Null Hypothesis ($H_0$) | Decision Rule |
+#### Data Schema:
+| Sensor / Feature | Units | Physical Significance | Normal Range |
 | :--- | :--- | :--- | :--- |
-| **One-Way ANOVA** | Continuous Telemetry vs. Binary Failure | Mean sensor reading is identical across normal and failure states. | Reject $H_0$ if $p < 0.05$; feature retained for model input. |
-| **Chi-Square ($\chi^2$)** | Product Quality (`L`, `M`, `H`) vs. Failure Modes | Machine type and failure rate are completely independent. | Reject $H_0$ if $p < 0.05$; validates product variant risk weighting. |
+| **Air Temperature** | Kelvin ($K$) | Ambient factory room temperature | $295\text{K} - 304\text{K}$ |
+| **Process Temperature** | Kelvin ($K$) | Working temperature at the milling interface | $305\text{K} - 313\text{K}$ |
+| **Rotational Speed** | Revolutions/min ($\text{rpm}$) | Spindle motor rotation rate | $1168 - 2886\text{ rpm}$ |
+| **Torque** | Newton-meters ($\text{Nm}$) | Mechanical rotational force applied | $3.8 - 76.6\text{ Nm}$ |
+| **Tool Wear** | Minutes ($\text{min}$) | Cumulative tool cutting time in current run | $0 - 253\text{ min}$ |
+| **Product Type** | Categorical | Quality grade: `L` (Low: 50%), `M` (Med: 30%), `H` (High: 20%) | Discrete |
+
+#### Target Definitions:
+1. **Machine Failure (Binary Target):** `0` = Healthy, `1` = Failure occurred.
+2. **Failure Modes (Multi-Mode Target):**
+   * **TWF (Tool Wear Failure):** Tool worn beyond critical threshold ($200 - 240\text{ min}$).
+   * **HDF (Heat Dissipation Failure):** Difference between Process and Air Temp $< 8.6\text{K}$ combined with rotational speed $< 1380\text{ rpm}$.
+   * **PWF (Power Failure):** Mechanical power drops below $3500\text{W}$ or spikes above $9000\text{W}$.
+   * **OSF (Overstrain Failure):** Combination of high tool wear and high mechanical torque exceeding shear tolerance.
+   * **RNF (Random Failure):** Uncorrelated process failure ($0.1\%$ probability).
+
+#### The Class Imbalance Challenge:
+* **Normal Operation:** $9,661$ rows ($96.6\%$)
+* **Failure Events:** $339$ rows ($3.4\%$)
+* **Why it matters:** Standard accuracy metrics are useless (a trivial model that always predicts "Healthy" achieves $96.6\%$ accuracy while missing $100\%$ of catastrophic breakdowns).
 
 ---
 
-### 3.4 Cost-Sensitive Modeling & Threshold Tuning
+### Stage 2: Physics-Informed Feature Engineering
 
-In manufacturing, symmetric loss functions (like accuracy) fail because errors have wildly asymmetric financial consequences:
+Raw sensor readings at a single second don't reveal failure mechanisms. We use physical laws and dynamics to construct high-signal features:
 
-$$\text{Cost Matrix: } C(\hat{y}, y)$$
+#### 1. Mechanical Power ($W$):
+$$\text{Power [Watts]} = \text{Torque [Nm]} \times \left( \text{Rotational Speed [rpm]} \times \frac{2\pi}{60} \right)$$
+* **Physical Rationale:** An electrical or motor failure (PWF) occurs when power draws exceed $9000\text{W}$ or drop below $3500\text{W}$. The raw torque or speed alone does not capture this; their physical product does.
 
-| Reality \ Prediction | Predicted Normal ($\hat{y} = 0$) | Predicted Failure ($\hat{y} = 1$) |
-| :--- | :--- | :--- |
-| **Actual Normal ($y = 0$)** | **$0** (Optimal) | **$200** (False Positive: 15-minute technician inspection) |
-| **Actual Failure ($y = 1$)** | **$10,000** (False Negative: Catastrophic breakdown, line stoppage) | **$1,500** (True Positive: Scheduled preemptive part replacement) |
+#### 2. Thermal Gradient ($\Delta T$):
+$$\Delta T = \text{Process Temperature} - \text{Air Temperature}$$
+* **Physical Rationale:** Machines cool by transferring heat to ambient air. When cooling fans clog or coolant dries up, heat dissipation collapses ($\Delta T < 8.6\text{K}$).
 
-* **Optimization Objective:** Minimize Total Industrial Cost:
-  $$\text{Expected Cost} = N_{FP} \cdot C_{FP} + N_{FN} \cdot C_{FN} + N_{TP} \cdot C_{TP}$$
-* **Threshold Search:** Slide classification threshold $\tau \in [0.05, 0.95]$ on out-of-fold validation probabilities to find the exact cost-minimizing decision boundary.
+#### 3. Overstrain Interaction Factor:
+$$\text{Overstrain Index} = \text{Tool Wear [min]} \times \text{Torque [Nm]}$$
+* **Physical Rationale:** A brand new tool can withstand high torque ($70\text{ Nm}$). But a worn tool ($200\text{ min}$) under the same torque will snap due to cumulative material fatigue.
 
----
+#### 4. Rolling Volatility & Standard Deviation:
+$$\mu_{\text{rolling}} = \frac{1}{W} \sum_{i=1}^W x_i, \quad \sigma_{\text{rolling}} = \sqrt{\frac{1}{W}\sum_{i=1}^W (x_i - \mu_{\text{rolling}})^2}$$
+* **Physical Rationale:** Bearings and cutting tools begin to chatter (vibrate) right before seizure. A spike in rolling standard deviation is an early indicator of mechanical instability.
 
-### 3.5 Model Explainability (XAI) Architecture
-
-Operators will not shut down an active production line based solely on a raw probability score. The XAI pipeline bridges this trust gap:
-
-* **Global Explainability (TreeSHAP)**: Identifies which sensors drive systemic machine vulnerability across the whole plant.
-* **Local Explainability (SHAP Waterfall Plots)**: For any machine exceeding the alert threshold, decomposes the prediction:
-  $$\hat{y} = \mathbb{E}[f(x)] + \sum_{i=1}^{M} \phi_i$$
-  Where $\phi_i$ represents the exact contribution of sensor $i$ to the failure risk.
+#### 5. Rate-of-Change ($\Delta / \Delta t$):
+$$\frac{\Delta \text{Sensor}}{\Delta t} = \text{Sensor}_t - \text{Sensor}_{t-1}$$
+* **Physical Rationale:** Catches rapid thermal spikes or sudden drops in spindle speed.
 
 ---
 
-### 3.6 Industrial Decision Matrix (Operational Tiers)
+### Stage 3: Statistical Hypothesis Testing Gate
+
+Instead of blindly feeding all engineered variables into a black-box model, we apply rigorous statistical validation:
 
 ```mermaid
-stateDiagram-v2
-    [*] --> TelemetryStream
-    TelemetryStream --> NormalTier: Risk Score < 35%
-    TelemetryStream --> WarningTier: 35% <= Risk Score <= 70%
-    TelemetryStream --> CriticalTier: Risk Score > 70%
-
-    NormalTier --> [*]: Green Status (Log & Continue)
-    WarningTier --> MaintenanceQueue: Yellow Status (Schedule Inspection in next shift)
-    CriticalTier --> EmergencyProtocol: Red Status (Automated RPM Throttle / Immediate Shutdown)
+flowchart LR
+    A["Raw & Engineered Features"] --> B{"Feature Type?"}
+    B -->|Continuous Sensors| C["One-Way ANOVA F-Test"]
+    B -->|Categorical Types| D["Chi-Square (χ²) Contingency Test"]
+    C --> E{"p-value < 0.05?"}
+    D --> F{"p-value < 0.05?"}
+    E -->|Yes: Reject H0| G["Retained: Significant Predictor"]
+    E -->|No: Fail to reject| H["Dropped: Noise / Redundant"]
+    F -->|Yes: Reject H0| G
+    F -->|No: Fail to reject| H
 ```
+
+#### Test 1: One-Way ANOVA (Continuous Sensors vs Binary Failure)
+* **Null Hypothesis ($H_0$):** The mean value of the sensor (e.g., Torque, Power, Tool Wear) is the same in healthy machines and failing machines ($\mu_{\text{healthy}} = \mu_{\text{failing}}$).
+* **Alternative Hypothesis ($H_1$):** The mean sensor value is significantly different in failing states ($\mu_{\text{healthy}} \neq \mu_{\text{failing}}$).
+* **Decision Rule:** If $p < 0.05$, the sensor has strong statistical discriminatory power and is passed to the ML engine.
+
+#### Test 2: Chi-Square Test of Independence ($\chi^2$)
+* **Null Hypothesis ($H_0$):** Machine quality variant (`L`, `M`, `H`) is independent of failure frequency.
+* **Alternative Hypothesis ($H_1$):** Cheaper variants (`L`) fail significantly more frequently than high-grade variants (`H`).
+* **Decision Rule:** If $p < 0.05$, product variant is confirmed as a critical risk factor.
 
 ---
 
-## 4. Repository & Code Architecture
+### Stage 4: Leakage-Free Preprocessing & Splitting
 
+1. **Stratified Split (80% Train, 20% Holdout Test):**
+   * Preserves the rare $3.4\%$ failure proportion in both training and test sets.
+2. **Strict Leakage Prevention:**
+   * Scalers (`StandardScaler`) and encoders (`OneHotEncoder`) are fitted **only on the training split**, then used to transform the test set.
+
+---
+
+### Stage 5: Cost-Sensitive Machine Learning Engine
+
+#### Why Standard Gradient Boosters Need Tuning:
+In standard cross-entropy loss, false positives and false negatives are penalized identically. For $3.4\%$ rare failure data, the model will bias towards predicting "Healthy".
+
+#### The Solution:
+1. **Baseline Benchmarks:**
+   * `LogisticRegression` (Linear baseline)
+   * `RandomForestClassifier` (Ensemble bagging baseline)
+2. **Champion Model: XGBoost / LightGBM**
+   * Configure `scale_pos_weight = \frac{N_{\text{negative}}}{N_{\text{positive}}} \approx 28.5`.
+   * This forces the gradient booster to multiply the gradient of failure errors by $28.5\times$, preventing the model from ignoring rare breakdowns.
+
+---
+
+### Stage 6: Industrial Cost Matrix & Optimal Thresholding
+
+In smart manufacturing, classification errors have asymmetric dollar values:
+
+$$\text{Total Plant Cost} = (N_{FN} \times C_{FN}) + (N_{FP} \times C_{FP}) + (N_{TP} \times C_{TP})$$
+
+| Outcome | Industrial Meaning | Estimated Financial Cost |
+| :--- | :--- | :--- |
+| **True Positive ($TP$)** | Predicted failure correctly $\to$ Scheduled tool replacement during shift break | **$1,500** (Part cost + 30 min maintenance) |
+| **False Negative ($FN$)** | Model missed breakdown $\to$ Tool shatters, spindle ruined, emergency factory halt | **$10,000** (Emergency repair + lost production) |
+| **False Positive ($FP$)** | False alarm $\to$ Technician inspects machine for 15 minutes, finds no issue | **$200** (Technician labor time) |
+| **True Negative ($TN$)** | Machine runs normally $\to$ No action | **$0** (Optimal operation) |
+
+* **Threshold Tuning Process:** We evaluate probability thresholds from $\tau = 0.05$ to $\tau = 0.95$ across the validation set. 
+* The cost-optimal threshold $\tau^*$ is chosen where **Total Plant Cost is minimized** (typically shifting from default $0.50$ down to $\sim 0.25 - 0.35$).
+
+---
+
+### Stage 7: Explainable AI (SHAP Diagnostic Engine)
+
+A maintenance technician will not take a $500,000 machine offline because a model outputs "Probability = 0.88". They need to know *what to fix*.
+
+```mermaid
+flowchart TD
+    MODEL["XGBoost Risk Score: 88%"] --> SHAP["TreeSHAP Attribution"]
+    SHAP --> DRIVER1["Tool Wear: 220 min (+45% Risk)"]
+    SHAP --> DRIVER2["Mechanical Power: 2,900W (-25% under normal)"]
+    SHAP --> DRIVER3["Thermal Gradient: 7.2K (Cooling issue)"]
+    DRIVER1 --> ADVICE["Maintenance Action: Replace cutting insert & check spindle coolant"]
+    DRIVER2 --> ADVICE
+    DRIVER3 --> ADVICE
 ```
-equipment-failure-risk/
-│
-├── .gitignore                     # Git tracking exclusions
-├── README.md                      # Project documentation and quickstart
-├── requirements.txt               # Pinned dependencies
-│
-├── data/
-│   ├── raw/                       # Immutable raw sensor telemetry
-│   └── processed/                 # Engineered features & split datasets
-│
-├── docs/
-│   └── architecture.md            # System architecture specification
-│
-├── notebooks/
-│   ├── 01_eda_and_statistical_tests.ipynb  # ANOVA, Chi2, sensor distributions
-│   └── 02_model_experimentation.ipynb      # Baseline vs XGBoost & Cost Curve
-│
-├── src/
-│   ├── __init__.py
-│   ├── data_loader.py             # Dataset fetching, validation, and splitting
-│   ├── features.py                # Physics equations & rolling statistics
-│   ├── stats_testing.py           # Automated ANOVA & Chi-Square screening
-│   ├── models.py                  # Training pipeline (XGBoost, Random Forest)
-│   ├── evaluation.py              # Cost matrix, PR-AUC, threshold optimization
-│   └── explainability.py          # SHAP calculation & plot generators
-│
-├── models/                        # Serialized champion models and scalers
-├── reports/
-│   └── figures/                   # Exported SHAP plots, PR curves, cost curves
-│
-└── app.py                         # Interactive Streamlit Risk Engine application
-```
+
+1. **Global Fleet SHAP (Summary Bee-swarm Plot):**
+   * Tells plant leadership which sensors across the whole factory are the leading causes of breakdowns (e.g., Tool Wear and Torque instability).
+2. **Local Machine SHAP (Waterfall Plot):**
+   * Generates a per-machine explanation at the instant an alert fires, showing which exact sensor values pushed the risk score into the danger zone.
+
+---
+
+### Stage 8: Industrial Decision Engine & Streamlit Dashboard
+
+The final output is an interactive web control console:
+
+| Risk Tier | Probability Range ($\tau$) | Plant Floor Action | UI Color Code |
+| :--- | :--- | :--- | :--- |
+| **🟢 Normal** | $P(\text{Fail}) < 35\%$ | Telemetry logged; normal manufacturing cycle continues. | Green |
+| **🟡 Warning** | $35\% \le P(\text{Fail}) \le 70\%$ | Create preventive work order; technician inspects at next shift change. | Amber |
+| **🔴 Critical** | $P(\text{Fail}) > 70\%$ | Immediate audible alert; automated spindle throttle-down; emergency shutdown. | Red |
+
+#### UI Features:
+1. **Interactive Telemetry Sliders:** Adjust temperature, rotational speed, torque, and tool wear.
+2. **Dynamic Risk Meter:** Circular gauge displaying real-time breakdown probability.
+3. **Automated Root-Cause Diagnostic:** Embedded SHAP waterfall diagram.
+4. **IoT Telemetry Replay / Stream Simulator:** Simulates real-time incoming sensor packets.
+
+---
+
+## Summary of Deliverables
+
+By following this architecture:
+1. **Data Pipeline:** Physics-informed transformations of multi-channel telemetry.
+2. **Statistical Validation:** Rigorous ANOVA & $\chi^2$ screening proofs.
+3. **High-Performance Modeling:** Class-weighted XGBoost with PR-AUC evaluation.
+4. **Economic Optimization:** Real-world dollar-cost minimization threshold curve.
+5. **Transparency & Trust:** Individual machine root-cause diagnosis via SHAP.
+6. **Production Asset:** Interactive Streamlit dashboard ready for demonstration.
