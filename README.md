@@ -134,16 +134,24 @@ By optimizing against this loss function, the classification threshold $\tau$ sh
 
 ## 📈 Model Benchmarks
 
-Evaluation performed on a 20% holdout test set (2,000 machine cycles, 68 failure events):
+Evaluation performed on a 20% holdout test set (2,000 machine cycles, 68 actual failure events):
 
-| Model | Precision | Recall | PR-AUC | False Negatives (Missed) | Total Simulated Cost |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Naive Baseline (Predict All 0s)** | 0.00 | 0.00 | 0.034 | 68 (100% missed) | $680,000 |
-| **Logistic Regression** | 0.42 | 0.65 | 0.541 | 24 missed | $258,400 |
-| **Random Forest (Default)** | 0.88 | 0.72 | 0.812 | 19 missed | $198,600 |
-| **XGBoost (Cost-Tuned $\tau^* = 0.28$)** | **0.84** | **0.94** | **0.914** | **4 missed** | **$58,200** |
+| Model Architecture | Precision | Recall | F2-Score | PR-AUC | False Negatives (Missed) | Total Simulated Cost |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Naive Baseline (All 0s)** | 0.000 | 0.000 | 0.000 | 0.034 | 68 (100% missed) | $680,000 |
+| **Logistic Regression (τ=0.50)** | 0.189 | 0.853 | 0.501 | 0.465 | 10 missed | $236,800 |
+| **Random Forest (τ=0.50)** | 0.961 | 0.721 | 0.759 | 0.876 | 19 missed | $263,900 |
+| **LightGBM (τ=0.50)** | 0.789 | 0.824 | 0.816 | 0.883 | 12 missed | $207,000 |
+| **XGBoost (Cost-Tuned τ*=0.20)** | **0.558** | **0.926** | **0.818** | **0.892** | **5 missed** | **$154,500** |
 
-> **Financial Impact:** The cost-tuned XGBoost model prevents 64 out of 68 breakdowns, saving an estimated **$621,800** compared to unmonitored operations.
+> **Financial Impact:** By tuning XGBoost to the cost-optimal decision threshold ($\tau^* = 0.20$), the engine catches **92.6% of all breakdowns**, reducing missed failures from 68 down to 5, and saving an estimated **$525,500.00** in unplanned downtime expenses.
+
+### Evaluation Curves
+
+<p align="center">
+  <img src="reports/figures/precision_recall_curves.png" width="48%" />
+  <img src="reports/figures/cost_vs_threshold.png" width="48%" />
+</p>
 
 ---
 
@@ -153,7 +161,12 @@ A factory technician will not stop a live production line based solely on a raw 
 
 1. **Global Fleet Vulnerability (Summary Plot):** Ranks the top physical failure drivers across all machinery in the facility.
 2. **Local Root-Cause Attribution (Waterfall Plot):** Explains individual alerts in plain language:
-   > *"Alert: Machine #1042 Risk = 86% [CRITICAL]. Primary Drivers: Tool Wear reached 215 min (+44% risk), Mechanical Power dropped below 3,100W (+28% risk)."*
+   > *"Alert: Machine #1042 Risk = 99.4% [CRITICAL]. Primary Drivers: Overstrain Index (+2.74 SHAP push), Mechanical Power (+1.51 SHAP push), Tool Wear (+0.77 SHAP push)."*
+
+<p align="center">
+  <img src="reports/figures/shap_summary.png" width="48%" />
+  <img src="reports/figures/shap_waterfall_sample.png" width="48%" />
+</p>
 
 ---
 

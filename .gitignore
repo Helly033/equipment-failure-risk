@@ -51,9 +51,9 @@ models/*.pkl
 models/*.json
 !models/.gitkeep
 
-# Output plots and reports
-reports/figures/*
-!reports/figures/.gitkeep
+# Output plots and reports (Tracked for portfolio demonstration)
+# reports/figures/
+
 
 # IDEs & OS specific
 .vscode/
