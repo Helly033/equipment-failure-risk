@@ -21,47 +21,92 @@ This project implements an **Industrial Risk Engine** that ingests real-time tel
 
 ---
 
-## 🏗️ System Architecture
+## 🏗️ Enterprise System Architecture
 
 ```mermaid
 flowchart TD
-    subgraph INGESTION["1. Telemetry Ingestion"]
-        S1["Air / Process Temp (K)"]
-        S2["Rotational Speed (RPM)"]
-        S3["Torque (Nm)"]
-        S4["Tool Wear (min)"]
-        RAW[("Raw Sensor Feed<br/>AI4I 2020 Dataset")]
-        S1 --> RAW
-        S2 --> RAW
-        S3 --> RAW
-        S4 --> RAW
+    %% TIER 1: CLIENTS
+    subgraph CLIENTS["1. Clients & Plant Consumers"]
+        direction LR
+        C_DASH["Operations Dashboard<br/>(Streamlit / Web UI)"]
+        C_HMI["Plant Floor HMI Terminal<br/>(Operator Console / Tablet)"]
+        C_ALERT["Emergency Alert / Pager<br/>(SCADA Interlock / Webhook)"]
     end
 
-    subgraph FE["2. Feature Engineering"]
-        FE_PHY["Physics-Informed Features<br/>- Mechanical Power (W)<br/>- Thermal Gradient ΔT<br/>- Overstrain Factor"]
-        FE_TIME["Rolling Statistics & Rate-of-Change"]
-        RAW --> FE_PHY
-        RAW --> FE_TIME
+    %% TIER 2: CONTROL PLANE
+    subgraph CONTROL_PLANE["2. Control Plane — apps/core (FastAPI + ML Services)"]
+        direction TB
+        subgraph CP_GW["API & Ingestion Gateway"]
+            API_GW["REST API /api/v1 & WebSockets"]
+            AUTH["UnifiedAuthGuard<br/>(JWT / API Key / HMAC)"]
+            INGEST_SVC["Telemetry Ingestion Service<br/>(Schema & Range Validator)"]
+            API_GW --> AUTH --> INGEST_SVC
+        end
+
+        subgraph CP_ENG["Analytics & ML Engine"]
+            FE_ENGINE["Physics & Signal Engine<br/>- Mechanical Power (W)<br/>- Thermal Gradient ΔT<br/>- Overstrain Factor<br/>- Rolling Volatility (σ)"]
+            STATS_GATE["Statistical Validation Gate<br/>- ANOVA F-Test Screening<br/>- Chi-Square (χ²) Independence<br/>- Sensor Drift Detector"]
+            INF_WORKER["ML Inference Worker<br/>(XGBoost / LightGBM)"]
+            COST_POL["Cost Policy Optimizer<br/>(Minimizes $10k FN Downtime Cost)"]
+            SHAP_WORKER["SHAP Diagnostic Worker<br/>(Local Waterfall Root Cause)"]
+            ALERT_SVC["Alert & Dispatch Service<br/>(Risk Tiers: Green / Amber / Red)"]
+
+            INGEST_SVC --> FE_ENGINE
+            FE_ENGINE --> STATS_GATE
+            STATS_GATE --> INF_WORKER
+            INF_WORKER --> COST_POL
+            COST_POL --> SHAP_WORKER
+            SHAP_WORKER --> ALERT_SVC
+        end
     end
 
-    subgraph STATS["3. Statistical Screening Gate"]
-        ANOVA["ANOVA F-Test<br/>Continuous Telemetry vs Failure"]
-        CHI2["Chi-Square (χ²)<br/>Machine Variants vs Failure Modes"]
-        FE_PHY --> STATS
-        FE_TIME --> STATS
+    %% TIER 3: DATA PLANE
+    subgraph DATA_PLANE["3. Data Plane — apps/edge (Streaming & Telemetry Pipeline)"]
+        direction TB
+        subgraph EDGE_MACHINES["Industrial Machine Fleet (Edge Sensors)"]
+            M_CNC1["CNC Milling Cell #1<br/>(Temp, RPM, Torque, Wear)"]
+            M_CNC2["CNC Milling Cell #2<br/>(Temp, RPM, Torque, Wear)"]
+            M_CNC3["CNC Milling Cell #N<br/>(Temp, RPM, Torque, Wear)"]
+        end
+
+        subgraph EDGE_BROKER["Edge Ingestion & Buffering"]
+            EDGE_GW["Edge IoT Gateway<br/>(OPC-UA / MQTT Broker)"]
+            STREAM_WORKER["Stream Consumer Worker<br/>(Window Aggregator)"]
+            REDIS_BUFFER[("Redis Ring Buffer<br/>(Rolling 30-Cycle Window)")]
+        end
+
+        M_CNC1 --> EDGE_GW
+        M_CNC2 --> EDGE_GW
+        M_CNC3 --> EDGE_GW
+        EDGE_GW --> STREAM_WORKER
+        STREAM_WORKER <--> REDIS_BUFFER
     end
 
-    subgraph ML["4. Cost-Sensitive ML Engine"]
-        MODEL["XGBoost / LightGBM<br/>(scale_pos_weight for ~3.4% imbalance)"]
-        COST["Cost Matrix Threshold Optimization<br/>(Minimizing Catastrophic False Negatives)"]
-        STATS --> MODEL --> COST
+    %% TIER 4: STATEFUL INFRASTRUCTURE
+    subgraph INFRA["4. Stateful Infrastructure"]
+        direction LR
+        DB_REDIS[("Redis 7<br/>(Sliding Buffer & Cache)")]
+        DB_TS[("InfluxDB / TimescaleDB<br/>(Telemetry Historian)")]
+        DB_POSTGRES[("PostgreSQL 16<br/>(Machines, Logs, Work Orders)")]
+        DB_S3[("MinIO / S3<br/>(Model Registry & Artifacts)")]
+        QUEUE_KAFKA[("Kafka / Redpanda<br/>(Event Stream Broker)")]
     end
 
-    subgraph SERVING["5. Decision Engine & Explainability"]
-        SHAP["SHAP Waterfall Explanations<br/>(Root-Cause Attribution)"]
-        APP["Streamlit Risk Dashboard<br/>🟢 Normal | 🟡 Warning | 🔴 Critical"]
-        COST --> SHAP --> APP
-    end
+    %% INTER-TIER FLOWS
+    C_DASH -- "1. Telemetry Query & What-If Simulation" --> API_GW
+    API_GW -- "2. Risk Probabilities & SHAP Waterfall" --> C_DASH
+    ALERT_SVC -- "3. Emergency Throttle / Pager Alarm" --> C_ALERT
+    ALERT_SVC -- "4. Operator Prescription Ticket" --> C_HMI
+
+    STREAM_WORKER -- "5. Sensor Stream Batch" --> INGEST_SVC
+    STREAM_WORKER -- "6. High-Frequency Pub/Sub" --> QUEUE_KAFKA
+    QUEUE_KAFKA --> INGEST_SVC
+
+    INF_WORKER -- "7. Load Model & Encoders" --> DB_S3
+    ALERT_SVC -- "8. Persist Prediction & Incident" --> DB_POSTGRES
+    STREAM_WORKER -- "9. Store Raw Sensor Telemetry" --> DB_TS
+    REDIS_BUFFER -. "10. Cache Sync" .-> DB_REDIS
+    C_HMI -. "11. Direct Machine Control" .-> EDGE_GW
 ```
 
 *For complete architectural specifications, see [docs/architecture.md](docs/architecture.md).*
